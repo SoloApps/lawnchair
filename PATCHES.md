@@ -15,11 +15,13 @@ moeten worden toegepast. Op dit moment bevat de fork één samenhangende feature
 ### Doel
 Deze feature maakt apps uit de Android **Private Space** sleepbaar naar de homescreen
 (workspace) — maar **uitsluitend** wanneer de Private Space ontgrendeld is. Een tik op een
-vergrendelde Private Space-app die al op de homescreen staat, vraagt eerst de
+vergrendelde Private Space-app die al op de homescreen staat, toont de
 Private Space-unlock (de echte profielvergrendeling van Android) en start de app pas na
-succesvolle ontgrendeling. Wanneer de Private Space ontgrendeld is, start de app direct.
-Het gedrag is in/uit te schakelen via een Lawnchair-voorkeur en beweegt live mee met
-lock/unlock-wisselingen zonder herstart.
+succesvolle ontgrendeling. Dit laatste wordt **door Android zelf** afgehandeld (stock
+Launcher3 start de quiet-profile app, waarna het systeem één keer om de pincode vraagt);
+de fork voegt hier bewust geen eigen unlock-aanroep aan toe, want dat veroorzaakte dubbele
+pincode-prompts. Het gedrag is in/uit te schakelen via een Lawnchair-voorkeur en beweegt
+live mee met lock/unlock-wisselingen zonder herstart.
 
 De beslissingslogica is **gecentraliseerd** in `PrivateSpaceHomeHelper.kt` (PSCHAIR-laag);
 de upstream-bestanden bevatten alleen kleine, gemarkeerde aanroepen naar deze helper.
@@ -40,8 +42,12 @@ nagekeken. De wijzigingen zijn bewust minimaal: bij voorkeur één aanroep naar
 | 4 | `src/com/android/launcher3/model/data/AppInfo.java` | Statische pin-vlag conditioneel | `FLAG_NOT_PINNABLE` wordt voor private items alleen gezet wanneer de feature uit staat; gebruikt `apiWrapper.getContext()` om de toggle te lezen. |
 | 5 | `src/com/android/launcher3/model/data/WorkspaceItemInfo.java` | Idem voor deep-shortcuts | Zelfde conditionele `FLAG_NOT_PINNABLE`-logica; leest de toggle via de constructor-context. |
 | 6 | `quickstep/src/com/android/launcher3/model/data/TaskViewItemInfo.kt` | Idem voor taakitems (recents) | Zelfde conditionele `FLAG_NOT_PINNABLE`-logica voor recents/taakitems. |
-| 7 | `src/com/android/launcher3/touch/ItemClickHandler.java` | Klik-afhandeling met unlock | Bij tik op een vergrendelde private app: `requestUnlockThenRun(...)` (echte profielvergrendeling) en daarna start. Ontgrendeld = direct starten. |
-| 8 | `src/com/android/launcher3/util/ApiWrapper.java` | Context-getter | Kleine gemarkeerde getter `getContext()` toegevoegd, zodat `AppInfo` de feature-toggle kan lezen. |
+| 7 | `src/com/android/launcher3/util/ApiWrapper.java` | Context-getter | Kleine gemarkeerde getter `getContext()` toegevoegd, zodat `AppInfo` de feature-toggle kan lezen. |
+
+> **Starten van een vergrendelde Private Space-app** wordt NIET door de fork afgehandeld.
+> `ItemClickHandler.java` is bewust **niet** gepatcht: stock Launcher3 start de quiet-profile
+> app, waarna Android zelf één keer de pincode vraagt. Een eigen unlock-aanroep gaf dubbele
+> prompts en is daarom verwijderd.
 
 ---
 
@@ -52,7 +58,7 @@ worden bij een merge gewoon meegenomen.
 
 | Bestand | Status | Doel |
 |---------|--------|------|
-| `lawnchair/src/app/lawnchair/privatespace/PrivateSpaceHomeHelper.kt` | NIEUW | Centrale beslislogica (`isFeatureEnabled`, `isPrivateItem`, `isPrivateSpaceUnlocked`, `canPinPrivateItem`) + asynchrone unlock-on-tap. Luistert via `UserCache.addUserEventListener` op profiel-beschikbaar; veiligheids-timeout 60s; idempotent; voert alleen de laatste pending start uit. |
+| `lawnchair/src/app/lawnchair/privatespace/PrivateSpaceHomeHelper.kt` | NIEUW | Centrale beslislogica (`isFeatureEnabled`, `isPrivateItem`, `isPrivateSpaceUnlocked`, `canPinPrivateItem`) voor de pinbaarheid van Private Space-items op basis van de live unlock-status. |
 | `lawnchair/src/app/lawnchair/preferences2/PreferenceManager2.kt` | Gewijzigd | Preference `allowPrivateSpaceOnHome` (default `true`), volgens het patroon van `lockHomeScreen`. |
 | `lawnchair/res/values/config.xml` | Gewijzigd | Bool `config_default_allow_private_space_on_home` = `true` (configureerbare standaardwaarde). |
 | `lawnchair/src/app/lawnchair/ui/preferences/destinations/HomeScreenPreferences.kt` | Gewijzigd | `SwitchPreference` voor de toggle in de Homescreen-instellingen. |
@@ -65,12 +71,12 @@ worden bij een merge gewoon meegenomen.
 Bij het synchroniseren met een nieuwe Lawnchair/Launcher3-release:
 
 1. Zoek in de codebase op `PSCHAIR-PATCH` om **alle** upstream-aanrakingen terug te vinden.
-   In `16-dev` zijn dit exact **8 bestanden** (zie tabel hierboven).
+   In `16-dev` zijn dit exact **7 bestanden** (zie tabel hierboven).
 2. Pas elke gemarkeerde wijziging opnieuw toe; de blokken zijn klein en bevatten meestal
    alleen een aanroep naar `PrivateSpaceHomeHelper`.
 3. De volledige beslislogica zit gecentraliseerd in
    `lawnchair/src/app/lawnchair/privatespace/PrivateSpaceHomeHelper.kt`. Als de helper-API
-   ongewijzigd blijft, beperkt het merge-werk zich tot het terugplaatsen van de 8 markeringen.
+   ongewijzigd blijft, beperkt het merge-werk zich tot het terugplaatsen van de 7 markeringen.
 4. **Raak geen gegenereerde bestanden aan** (`flags/.../FeatureFlagsImpl.java`,
    `flags/.../Flags.java`, `flags/.../CustomFeatureFlags.java`, `aconfig/*`). De feature
    gebruikt een Lawnchair-preference, geen aconfig-flag.

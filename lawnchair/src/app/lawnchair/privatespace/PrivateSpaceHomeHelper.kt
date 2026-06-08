@@ -259,7 +259,14 @@ object PrivateSpaceHomeHelper {
             val listener = UserCache.getInstance(appContext)
                 .addUserEventListener { user, eventAction ->
                     if (isProfileAvailableAction(eventAction) && user == action.user) {
-                        onProfileMaybeAvailable(appContext, action)
+                        // IMPORTANT: UserCache.onUsersChanged dispatches events by iterating its
+                        // listener list with forEach() on the main thread. Handling the event here
+                        // synchronously would eventually call listener.close(), which removes this
+                        // listener from that same list mid-iteration -> ConcurrentModificationException.
+                        // Post the handling so it runs AFTER the dispatch loop has finished.
+                        // (MAIN_EXECUTOR.execute would run inline when already on the main thread,
+                        // so we explicitly post on the handler to force deferral.)
+                        MAIN_EXECUTOR.handler.post { onProfileMaybeAvailable(appContext, action) }
                     }
                 }
             // If a newer request replaced us during registration, close immediately.

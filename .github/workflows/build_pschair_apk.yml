@@ -1,0 +1,30 @@
+name: Build PSChair APK
+
+# Handmatig te starten via het tabblad "Actions" -> "Build PSChair APK" -> "Run workflow".
+# Bouwt de GitHub release-variant. Omdat de fork geen keystore.properties heeft, wordt de
+# APK automatisch met de debug-sleutel ondertekend (zie build.gradle), dus direct installeerbaar.
+# De release-variant gebruikt R8, dat Java records (BitmapInfo) correct verwerkt -- dit voorkomt
+# de "com.android.tools.r8.RecordTag" crash die de debug-variant op AGP 9.x geeft.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-pschair-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build PSChair release APK (debug-signed)
+        run: ./gradlew assembleLawnWithQuickstepGithubRelease
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: PSChair-APK
+          path: build/outputs/apk/**/*.apk

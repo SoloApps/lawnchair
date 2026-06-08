@@ -40,6 +40,10 @@ import com.android.launcher3.util.ApplicationInfoWrapper;
 import com.android.launcher3.util.PackageManagerHelper;
 import com.android.launcher3.util.UserIconInfo;
 
+// PSCHAIR-PATCH BEGIN: feature-toggle for Private Space on the home screen
+import app.lawnchair.privatespace.PrivateSpaceHomeHelper;
+// PSCHAIR-PATCH END
+
 import java.util.Comparator;
 
 /**
@@ -213,7 +217,13 @@ public class AppInfo extends ItemInfoWithIcon implements WorkspaceItemFactory {
 
         if (Flags.privateSpaceRestrictAccessibilityDrag()) {
             if (userIconInfo.isPrivate()) {
-                info.runtimeStatusFlags |= FLAG_NOT_PINNABLE;
+                // PSCHAIR-PATCH BEGIN: laat live poortwachter beslissen wanneer feature aan staat
+                if (!PrivateSpaceHomeHelper.INSTANCE.isFeatureEnabled(apiWrapper.getContext())) {
+                    info.runtimeStatusFlags |= FLAG_NOT_PINNABLE;
+                } else {
+                    info.runtimeStatusFlags &= ~FLAG_NOT_PINNABLE;
+                }
+                // PSCHAIR-PATCH END
             } else {
                 info.runtimeStatusFlags &= ~FLAG_NOT_PINNABLE;
             }

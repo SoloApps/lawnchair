@@ -674,6 +674,8 @@
     <string name="home_screen_unlock">Unlock home screen</string>
     <string name="home_screen_locked">Home screen is locked</string>
     <string name="home_screen_lock_description">Prevent changes to the home screen layout</string>
+    <string name="private_space_on_home_label">Allow Private Space apps on home screen</string>
+    <string name="private_space_on_home_description">Drag unlocked Private Space apps to the home screen. Locked apps ask for the Private Space unlock when tapped.</string>
 
     <string name="set_default_home_page">Set as default page</string>
     <string name="default_home_page_set">Default home page updated</string>

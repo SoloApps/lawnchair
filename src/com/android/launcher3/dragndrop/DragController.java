@@ -19,6 +19,7 @@ package com.android.launcher3.dragndrop;
 import static com.android.launcher3.Flags.removeAppsRefreshOnRightClick;
 import static com.android.launcher3.model.data.ItemInfoWithIcon.FLAG_NOT_PINNABLE;
 
+import android.content.Context;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
@@ -53,6 +54,7 @@ import java.util.function.Predicate;
 import app.lawnchair.LawnchairApp;
 import app.lawnchair.preferences.PreferenceManager;
 import app.lawnchair.preferences2.PreferenceManager2;
+import app.lawnchair.privatespace.PrivateSpaceHomeHelper;
 
 /**
  * Class for initiating a drag within a view or across multiple views.
@@ -242,6 +244,16 @@ public abstract class DragController<T extends ActivityContext>
     }
 
     protected boolean isItemPinnable() {
+        // PSCHAIR-PATCH BEGIN: sta slepen van Private Space-items toe wanneer Private Space ontgrendeld is
+        if (mDragObject.dragInfo instanceof ItemInfoWithIcon psItem
+                && (psItem.runtimeStatusFlags & FLAG_NOT_PINNABLE) != 0) {
+            Context ctx = mActivity.asContext();
+            if (ctx != null
+                    && PrivateSpaceHomeHelper.INSTANCE.canPinPrivateItem(ctx, mDragObject.dragInfo)) {
+                return true;
+            }
+        }
+        // PSCHAIR-PATCH END
         return !Flags.privateSpaceRestrictItemDrag()
                 || !(mDragObject.dragInfo instanceof ItemInfoWithIcon itemInfoWithIcon)
                 || (itemInfoWithIcon.runtimeStatusFlags & FLAG_NOT_PINNABLE) == 0;

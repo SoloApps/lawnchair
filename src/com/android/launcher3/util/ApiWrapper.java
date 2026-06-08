@@ -77,6 +77,14 @@ public class ApiWrapper {
                 com.android.launcher3.R.array.config_appsSupportMultiInstancesSplit);
     }
 
+    // PSCHAIR-PATCH BEGIN: expose the application context held by this wrapper so
+    // call-sites without a direct Context (e.g. AppInfo#updateRuntimeFlagsForActivityTarget)
+    // can reach the PSCHAIR feature-toggle.
+    public Context getContext() {
+        return mContext;
+    }
+    // PSCHAIR-PATCH END
+
     /**
      * Returns the list of persons associated with the provided shortcut info
      */

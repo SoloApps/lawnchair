@@ -188,6 +188,13 @@ fun HomeScreenPreferences(
                     description = stringResource(id = R.string.home_screen_lock_description),
                 )
             }
+            Item {
+                SwitchPreference(
+                    adapter = prefs2.allowPrivateSpaceOnHome.getAdapter(),
+                    label = stringResource(id = R.string.private_space_on_home_label),
+                    description = stringResource(id = R.string.private_space_on_home_description),
+                )
+            }
         }
         PreferenceGroup(heading = stringResource(id = R.string.popup_menu)) {
             Item { LauncherPopupPreferenceItem() }

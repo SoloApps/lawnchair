@@ -21,6 +21,7 @@ import android.content.Intent
 import android.os.Process
 import androidx.annotation.VisibleForTesting
 import androidx.annotation.VisibleForTesting.Companion.PRIVATE
+import app.lawnchair.privatespace.PrivateSpaceHomeHelper
 import com.android.launcher3.Flags.privateSpaceRestrictAccessibilityDrag
 import com.android.launcher3.LauncherSettings
 import com.android.launcher3.logger.LauncherAtom
@@ -45,7 +46,11 @@ class TaskViewItemInfo(taskView: TaskView, taskContainer: TaskContainer?) : Work
                 if (
                     UserCache.getInstance(taskView.context).getUserInfo(componentKey.user).isPrivate
                 ) {
-                    runtimeStatusFlags = runtimeStatusFlags or ItemInfoWithIcon.FLAG_NOT_PINNABLE
+                    // PSCHAIR-PATCH BEGIN: laat live poortwachter beslissen wanneer feature aan staat
+                    if (!PrivateSpaceHomeHelper.isFeatureEnabled(taskView.context)) {
+                        runtimeStatusFlags = runtimeStatusFlags or ItemInfoWithIcon.FLAG_NOT_PINNABLE
+                    }
+                    // PSCHAIR-PATCH END
                 }
             }
             componentName = componentKey.componentName.flattenToShortString()

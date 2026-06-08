@@ -44,6 +44,8 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Toast;
 
+import app.lawnchair.privatespace.PrivateSpaceHomeHelper;
+
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.BuildConfig;
 import com.android.launcher3.Flags;
@@ -382,6 +384,16 @@ public class ItemClickHandler {
     private static void startAppShortcutOrInfoActivity(View v, ItemInfo item, Launcher launcher) {
         TestLogging.recordEvent(
                 TestProtocol.SEQUENCE_MAIN, "start: startAppShortcutOrInfoActivity");
+        // PSCHAIR-PATCH BEGIN: vraag Private Space-unlock bij tik op vergrendelde private app
+        Context pschairCtx = launcher; // Launcher is een Context
+        if (PrivateSpaceHomeHelper.INSTANCE.isFeatureEnabled(pschairCtx)
+                && PrivateSpaceHomeHelper.INSTANCE.isPrivateItem(pschairCtx, item)
+                && !PrivateSpaceHomeHelper.INSTANCE.isPrivateSpaceUnlocked(launcher)) {
+            PrivateSpaceHomeHelper.INSTANCE.requestUnlockThenRun(launcher, item,
+                    () -> startAppShortcutOrInfoActivity(v, item, launcher));
+            return;
+        }
+        // PSCHAIR-PATCH END
         Intent intent = item.getIntent();
         if (item instanceof ItemInfoWithIcon itemInfoWithIcon) {
             if ((itemInfoWithIcon.runtimeStatusFlags

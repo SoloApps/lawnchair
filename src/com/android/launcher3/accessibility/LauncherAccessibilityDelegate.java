@@ -24,6 +24,8 @@ import android.view.accessibility.AccessibilityEvent;
 
 import androidx.annotation.Nullable;
 
+import app.lawnchair.privatespace.PrivateSpaceHomeHelper;
+
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.AppWidgetResizeFrame;
 import com.android.launcher3.BubbleTextView;
@@ -154,6 +156,11 @@ public class LauncherAccessibilityDelegate extends BaseAccessibilityDelegate<Lau
     }
 
     private boolean supportAddToWorkSpace(ItemInfo item) {
+        // PSCHAIR-PATCH BEGIN: sta "toevoegen aan startscherm" toe voor Private Space-items wanneer ontgrendeld
+        if (PrivateSpaceHomeHelper.INSTANCE.canPinPrivateItem(mContext, item)) {
+            return true;
+        }
+        // PSCHAIR-PATCH END
         return ((item instanceof AppInfo)
                     && (((AppInfo) item).runtimeStatusFlags & FLAG_NOT_PINNABLE) == 0)
                 || ((item instanceof WorkspaceItemInfo)

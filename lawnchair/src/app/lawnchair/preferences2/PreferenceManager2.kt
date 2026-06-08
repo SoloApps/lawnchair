@@ -348,6 +348,11 @@ class PreferenceManager2 @Inject constructor(
         defaultValue = context.resources.getBoolean(R.bool.config_default_lock_home_screen),
     )
 
+    val allowPrivateSpaceOnHome = preference(
+        key = booleanPreferencesKey(name = "allow_private_space_on_home"),
+        defaultValue = context.resources.getBoolean(R.bool.config_default_allow_private_space_on_home),
+    )
+
     val defaultHomePage = preference(
         key = intPreferencesKey(name = "default_home_page"),
         defaultValue = Workspace.DEFAULT_PAGE,

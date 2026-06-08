@@ -46,6 +46,10 @@ import android.widget.ImageView;
 
 import androidx.annotation.LayoutRes;
 
+// PSCHAIR-PATCH BEGIN: centrale helper voor Private Space-pinbaarheid
+import app.lawnchair.privatespace.PrivateSpaceHomeHelper;
+// PSCHAIR-PATCH END
+
 import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.DragSource;
@@ -248,7 +252,12 @@ public class PopupContainerWithArrow<T extends Context & ActivityContext>
     private void configureForLauncher(Launcher launcher, ItemInfo itemInfo) {
         addOnAttachStateChangeListener(new LauncherPopupLiveUpdateHandler(
                 launcher, (PopupContainerWithArrow<Launcher>) this));
-        if (!Flags.privateSpaceRestrictItemDrag()
+        // PSCHAIR-PATCH BEGIN: maak drag-handler aan voor Private Space-items wanneer ontgrendeld
+        boolean pschairAllowPrivatePin =
+                PrivateSpaceHomeHelper.INSTANCE.canPinPrivateItem(getContext(), itemInfo);
+        // PSCHAIR-PATCH END
+        if (pschairAllowPrivatePin
+                || !Flags.privateSpaceRestrictItemDrag()
                 || !(itemInfo instanceof ItemInfoWithIcon itemInfoWithIcon)
                 || (itemInfoWithIcon.runtimeStatusFlags & FLAG_NOT_PINNABLE) == 0) {
             mPopupItemDragHandler = new LauncherPopupItemDragHandler(launcher, this);

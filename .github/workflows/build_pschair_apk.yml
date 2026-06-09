@@ -1,13 +1,21 @@
 name: Build PSChair APK
 
-# Handmatig te starten via het tabblad "Actions" -> "Build PSChair APK" -> "Run workflow".
-# Bouwt de GitHub release-variant. Omdat de fork geen keystore.properties heeft, wordt de
-# APK automatisch met de debug-sleutel ondertekend (zie build.gradle), dus direct installeerbaar.
-# De release-variant gebruikt R8, dat Java records (BitmapInfo) correct verwerkt -- dit voorkomt
-# de "com.android.tools.r8.RecordTag" crash die de debug-variant op AGP 9.x geeft.
+# Handmatig te starten via "Actions" -> "Build PSChair APK" -> "Run workflow".
+# Bouwt de GitHub release-variant (R8) en publiceert die als GitHub Release, zodat Obtainium
+# de app automatisch kan installeren en bijwerken.
+#
+# Ondertekening:
+#  - Zijn de secrets KEYSTORE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD ingesteld, dan wordt
+#    de APK met JOUW vaste sleutel ondertekend. Dit is nodig zodat Obtainium kan UPDATEN zonder
+#    handtekening-conflict (zie de instructies onderaan dit bestand).
+#  - Zonder die secrets valt build.gradle terug op de debug-sleutel: prima om te installeren/testen,
+#    maar updates vereisen dan eerst de-installeren (de debug-sleutel verschilt per build).
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-pschair-apk:
@@ -21,10 +29,44 @@ jobs:
           distribution: 'zulu'
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6
-      - name: Build PSChair release APK (debug-signed)
+
+      - name: Write signing config (stable key for Obtainium updates)
+        run: |
+          if [ -n "${{ secrets.KEYSTORE }}" ]; then
+            echo storePassword='${{ secrets.KEYSTORE_PASSWORD }}' >> keystore.properties
+            echo keyAlias='${{ secrets.KEY_ALIAS }}' >> keystore.properties
+            echo keyPassword='${{ secrets.KEY_PASSWORD }}' >> keystore.properties
+            echo storeFile='${{ github.workspace }}/key.jks' >> keystore.properties
+            echo '${{ secrets.KEYSTORE }}' | base64 --decode > '${{ github.workspace }}/key.jks'
+            echo "Using release keystore from secrets."
+          else
+            echo "No KEYSTORE secret set; building debug-signed (updates may require reinstall)."
+          fi
+
+      - name: Build PSChair release APK
         run: ./gradlew assembleLawnWithQuickstepGithubRelease
-      - name: Upload APK
+
+      - name: Collect APK
+        id: apk
+        run: |
+          set -e
+          APK="$(find build/outputs/apk -name '*.apk' | head -n 1)"
+          echo "Found APK: $APK"
+          DEST="PSChair-${{ github.run_number }}.apk"
+          cp "$APK" "$DEST"
+          echo "dest=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: PSChair-APK
-          path: build/outputs/apk/**/*.apk
+          path: ${{ steps.apk.outputs.dest }}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pschair-v${{ github.run_number }}
+          name: PSChair v${{ github.run_number }}
+          body: |
+            Automatische PSChair-build (run ${{ github.run_number }}, commit ${{ github.sha }}).
+          files: ${{ steps.apk.outputs.dest }}

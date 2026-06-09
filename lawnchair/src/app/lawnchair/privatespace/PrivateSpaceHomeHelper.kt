@@ -50,9 +50,6 @@ object PrivateSpaceHomeHelper {
 
     private const val TAG = "PrivateSpaceHomeHelper"
 
-    /** Highly visible diagnostic tag so a clean logcat shows exactly what our unlock flow does. */
-    private const val DBG = "PSChairUnlock"
-
     /** Safety timeout (ms) after which a pending unlock is abandoned (e.g. prompt dismissed). */
     private const val UNLOCK_TIMEOUT_MS = 60_000L
 
@@ -171,13 +168,10 @@ object PrivateSpaceHomeHelper {
     fun requestUnlockThenRun(launcher: Launcher, info: ItemInfo, onUnlocked: Runnable) {
         val user = info.user ?: return
         if (!isFeatureEnabled(launcher)) return
-        Log.w(DBG, "requestUnlockThenRun: tap on locked private app, user=$user")
         // Only one credential prompt at a time -> no duplicate pincode prompts.
         if (!unlockInProgress.compareAndSet(false, true)) {
-            Log.w(DBG, "requestUnlockThenRun: SKIP - an unlock is already in progress")
             return
         }
-        Log.w(DBG, "requestUnlockThenRun: starting unlock flow (will request quiet mode = false)")
 
         val appContext = launcher.applicationContext
         val finished = AtomicBoolean(false)
@@ -230,7 +224,6 @@ object PrivateSpaceHomeHelper {
                 false
             }
             if (ready) {
-                Log.w(DBG, "profile fully unlocked (poll) -> launching app (attempt=$attempt)")
                 finish(runAction = true)
             } else if (attempt < READY_MAX_ATTEMPTS) {
                 MAIN_EXECUTOR.handler.postDelayed(
@@ -241,7 +234,7 @@ object PrivateSpaceHomeHelper {
                 // Do NOT launch prematurely: launching before the profile is fully unlocked
                 // (CE storage) makes the platform show a SECOND credential prompt. Give up quietly;
                 // the authoritative unlocked-broadcast path will normally have launched already.
-                Log.w(DBG, "profile never reported fully unlocked; not launching to avoid 2nd prompt")
+                Log.d(TAG, "Profile never reported fully unlocked; not launching to avoid 2nd prompt")
             }
         }
 
@@ -254,7 +247,6 @@ object PrivateSpaceHomeHelper {
                         // now does NOT trigger a second credential prompt.
                         isProfileUnlockedAction(action) -> {
                             MAIN_EXECUTOR.handler.post {
-                                Log.w(DBG, "profile accessible/unlocked -> launching app")
                                 finish(runAction = true)
                             }
                         }
@@ -262,7 +254,6 @@ object PrivateSpaceHomeHelper {
                         // Start a fallback poll in case the unlocked broadcast doesn't reach us.
                         isProfileAvailableAction(action) -> {
                             if (!launchScheduled.getAndSet(true)) {
-                                Log.w(DBG, "profile available -> waiting for full unlock")
                                 MAIN_EXECUTOR.handler.post { launchWhenFullyUnlocked(0) }
                             }
                         }
@@ -283,7 +274,6 @@ object PrivateSpaceHomeHelper {
         try {
             val userManager = launcher.getSystemService(UserManager::class.java)
             // Real profile lock toggle: shows the system credential prompt when a lock is set.
-            Log.w(DBG, "calling UserManager.requestQuietModeEnabled(false) -> system shows ONE prompt")
             userManager?.requestQuietModeEnabled(false, user)
         } catch (se: SecurityException) {
             // Launcher is not the default HOME app: reuse the existing platform pattern and bail.

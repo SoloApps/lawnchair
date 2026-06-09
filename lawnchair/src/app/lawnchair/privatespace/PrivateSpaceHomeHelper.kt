@@ -56,9 +56,9 @@ object PrivateSpaceHomeHelper {
     /** Safety timeout (ms) after which a pending unlock is abandoned (e.g. prompt dismissed). */
     private const val UNLOCK_TIMEOUT_MS = 60_000L
 
-    /** Polling for "profile fully unlocked" after quiet mode turns off, before launching. */
+    /** Polling for "profile fully unlocked" as a fallback if the unlocked broadcast is missed. */
     private const val READY_POLL_INTERVAL_MS = 150L
-    private const val READY_MAX_ATTEMPTS = 40 // ~6s worst case
+    private const val READY_MAX_ATTEMPTS = 120 // ~18s worst case (CE unlock can take several seconds)
 
     /**
      * Guards against showing more than one credential prompt at a time. A second tap while an
@@ -227,11 +227,10 @@ object PrivateSpaceHomeHelper {
                 val um = appContext.getSystemService(UserManager::class.java)
                 um != null && !um.isQuietModeEnabled(user) && um.isUserUnlocked(user)
             } catch (e: Exception) {
-                // Cannot determine state -> don't block forever, proceed to launch.
-                true
+                false
             }
             if (ready) {
-                Log.w(DBG, "profile fully unlocked -> launching app (attempt=$attempt)")
+                Log.w(DBG, "profile fully unlocked (poll) -> launching app (attempt=$attempt)")
                 finish(runAction = true)
             } else if (attempt < READY_MAX_ATTEMPTS) {
                 MAIN_EXECUTOR.handler.postDelayed(
@@ -239,20 +238,33 @@ object PrivateSpaceHomeHelper {
                     READY_POLL_INTERVAL_MS,
                 )
             } else {
-                Log.w(DBG, "profile not fully unlocked after retries; launching anyway")
-                finish(runAction = true)
+                // Do NOT launch prematurely: launching before the profile is fully unlocked
+                // (CE storage) makes the platform show a SECOND credential prompt. Give up quietly;
+                // the authoritative unlocked-broadcast path will normally have launched already.
+                Log.w(DBG, "profile never reported fully unlocked; not launching to avoid 2nd prompt")
             }
         }
 
         try {
             listenerHolder[0] = UserCache.getInstance(appContext)
                 .addUserEventListener { changedUser, action ->
-                    if (changedUser == user && isProfileAvailableAction(action)) {
-                        // Defer: handling may close the listener, which must not happen during
-                        // UserCache.onUsersChanged's forEach iteration.
-                        if (!launchScheduled.getAndSet(true)) {
-                            Log.w(DBG, "profile event received -> waiting for full unlock")
-                            MAIN_EXECUTOR.handler.post { launchWhenFullyUnlocked(0) }
+                    if (changedUser != user) return@addUserEventListener
+                    when {
+                        // Authoritative signal: profile is fully unlocked & accessible. Launching
+                        // now does NOT trigger a second credential prompt.
+                        isProfileUnlockedAction(action) -> {
+                            MAIN_EXECUTOR.handler.post {
+                                Log.w(DBG, "profile accessible/unlocked -> launching app")
+                                finish(runAction = true)
+                            }
+                        }
+                        // Quiet mode just turned off, but CE storage may not be unlocked yet.
+                        // Start a fallback poll in case the unlocked broadcast doesn't reach us.
+                        isProfileAvailableAction(action) -> {
+                            if (!launchScheduled.getAndSet(true)) {
+                                Log.w(DBG, "profile available -> waiting for full unlock")
+                                MAIN_EXECUTOR.handler.post { launchWhenFullyUnlocked(0) }
+                            }
                         }
                     }
                 }
@@ -291,5 +303,15 @@ object PrivateSpaceHomeHelper {
     private fun isProfileAvailableAction(action: String?): Boolean {
         return action == UserCache.ACTION_PROFILE_AVAILABLE ||
             action == Intent.ACTION_MANAGED_PROFILE_AVAILABLE
+    }
+
+    /**
+     * Authoritative "profile is fully unlocked & accessible" actions. These fire only after the
+     * profile reaches RUNNING_UNLOCKED (CE storage unlocked), which is exactly when an app can be
+     * launched into it without the platform showing a second credential prompt.
+     */
+    private fun isProfileUnlockedAction(action: String?): Boolean {
+        return action == UserCache.ACTION_PROFILE_UNLOCKED || // ACTION_PROFILE_ACCESSIBLE on U+
+            action == Intent.ACTION_MANAGED_PROFILE_UNLOCKED
     }
 }

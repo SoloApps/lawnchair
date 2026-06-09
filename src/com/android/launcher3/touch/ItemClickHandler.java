@@ -358,9 +358,20 @@ public class ItemClickHandler {
      * @param v The view that was clicked. Must be a tagged with a {@link WorkspaceItemInfo}.
      */
     public static void onClickAppShortcut(View v, WorkspaceItemInfo shortcut, Launcher launcher) {
-        if (shortcut.isDisabled() && handleDisabledItemClicked(shortcut, launcher)) {
+        // PSCHAIR-PATCH BEGIN: bij een verse boot is de Private Space vergrendeld en zet Android
+        // FLAG_DISABLED_LOCKED_USER op deze homescreen-apps. Zonder deze uitzondering vangt
+        // handleDisabledItemClicked() de klik af met een "niet beschikbaar"-toast en wordt de
+        // unlock-op-tik (in startAppShortcutOrInfoActivity) nooit bereikt. Voor een vergrendelde
+        // Private Space-app slaan we de disabled-afhandeling daarom over en laten we de klik
+        // doorvallen naar startAppShortcutOrInfoActivity, dat de pincode toont en daarna start.
+        boolean pschairPrivateLocked =
+                PrivateSpaceHomeHelper.INSTANCE.isFeatureEnabled(launcher)
+                        && PrivateSpaceHomeHelper.INSTANCE.isPrivateProfileLocked(launcher, shortcut);
+        if (!pschairPrivateLocked && shortcut.isDisabled()
+                && handleDisabledItemClicked(shortcut, launcher)) {
             return;
         }
+        // PSCHAIR-PATCH END
 
         // Check for abandoned promise
         if ((v instanceof BubbleTextView) && shortcut.hasPromiseIconUi()

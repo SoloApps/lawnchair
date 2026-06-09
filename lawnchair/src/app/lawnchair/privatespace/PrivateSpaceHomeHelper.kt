@@ -56,6 +56,10 @@ object PrivateSpaceHomeHelper {
     /** Safety timeout (ms) after which a pending unlock is abandoned (e.g. prompt dismissed). */
     private const val UNLOCK_TIMEOUT_MS = 60_000L
 
+    /** Polling for "profile fully unlocked" after quiet mode turns off, before launching. */
+    private const val READY_POLL_INTERVAL_MS = 150L
+    private const val READY_MAX_ATTEMPTS = 40 // ~6s worst case
+
     /**
      * Guards against showing more than one credential prompt at a time. A second tap while an
      * unlock is already pending is ignored, which prevents duplicate pincode prompts.
@@ -211,20 +215,44 @@ object PrivateSpaceHomeHelper {
             }
         }
 
+        // The credential prompt turns quiet mode OFF first, but the profile needs a brief moment
+        // afterwards to become fully unlocked (CE storage / RUNNING_UNLOCKED). Launching the app
+        // during that transitional window makes the platform show a SECOND credential prompt.
+        // So we wait until the profile is fully unlocked before launching -> single prompt.
+        val launchScheduled = AtomicBoolean(false)
+
+        fun launchWhenFullyUnlocked(attempt: Int) {
+            if (finished.get()) return
+            val ready = try {
+                val um = appContext.getSystemService(UserManager::class.java)
+                um != null && !um.isQuietModeEnabled(user) && um.isUserUnlocked(user)
+            } catch (e: Exception) {
+                // Cannot determine state -> don't block forever, proceed to launch.
+                true
+            }
+            if (ready) {
+                Log.w(DBG, "profile fully unlocked -> launching app (attempt=$attempt)")
+                finish(runAction = true)
+            } else if (attempt < READY_MAX_ATTEMPTS) {
+                MAIN_EXECUTOR.handler.postDelayed(
+                    { launchWhenFullyUnlocked(attempt + 1) },
+                    READY_POLL_INTERVAL_MS,
+                )
+            } else {
+                Log.w(DBG, "profile not fully unlocked after retries; launching anyway")
+                finish(runAction = true)
+            }
+        }
+
         try {
             listenerHolder[0] = UserCache.getInstance(appContext)
                 .addUserEventListener { changedUser, action ->
                     if (changedUser == user && isProfileAvailableAction(action)) {
-                        // Defer: handling closes the listener, which must not happen during
+                        // Defer: handling may close the listener, which must not happen during
                         // UserCache.onUsersChanged's forEach iteration.
-                        MAIN_EXECUTOR.handler.post {
-                            val um = appContext.getSystemService(UserManager::class.java)
-                            if (um != null && !um.isQuietModeEnabled(user)) {
-                                Log.w(DBG, "profile available + unlocked -> launching app")
-                                finish(runAction = true)
-                            } else {
-                                Log.w(DBG, "profile event received but still quiet/locked; waiting")
-                            }
+                        if (!launchScheduled.getAndSet(true)) {
+                            Log.w(DBG, "profile event received -> waiting for full unlock")
+                            MAIN_EXECUTOR.handler.post { launchWhenFullyUnlocked(0) }
                         }
                     }
                 }

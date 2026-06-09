@@ -50,6 +50,9 @@ object PrivateSpaceHomeHelper {
 
     private const val TAG = "PrivateSpaceHomeHelper"
 
+    /** Highly visible diagnostic tag so a clean logcat shows exactly what our unlock flow does. */
+    private const val DBG = "PSChairUnlock"
+
     /** Safety timeout (ms) after which a pending unlock is abandoned (e.g. prompt dismissed). */
     private const val UNLOCK_TIMEOUT_MS = 60_000L
 
@@ -164,8 +167,13 @@ object PrivateSpaceHomeHelper {
     fun requestUnlockThenRun(launcher: Launcher, info: ItemInfo, onUnlocked: Runnable) {
         val user = info.user ?: return
         if (!isFeatureEnabled(launcher)) return
+        Log.w(DBG, "requestUnlockThenRun: tap on locked private app, user=$user")
         // Only one credential prompt at a time -> no duplicate pincode prompts.
-        if (!unlockInProgress.compareAndSet(false, true)) return
+        if (!unlockInProgress.compareAndSet(false, true)) {
+            Log.w(DBG, "requestUnlockThenRun: SKIP - an unlock is already in progress")
+            return
+        }
+        Log.w(DBG, "requestUnlockThenRun: starting unlock flow (will request quiet mode = false)")
 
         val appContext = launcher.applicationContext
         val finished = AtomicBoolean(false)
@@ -212,7 +220,10 @@ object PrivateSpaceHomeHelper {
                         MAIN_EXECUTOR.handler.post {
                             val um = appContext.getSystemService(UserManager::class.java)
                             if (um != null && !um.isQuietModeEnabled(user)) {
+                                Log.w(DBG, "profile available + unlocked -> launching app")
                                 finish(runAction = true)
+                            } else {
+                                Log.w(DBG, "profile event received but still quiet/locked; waiting")
                             }
                         }
                     }
@@ -232,6 +243,7 @@ object PrivateSpaceHomeHelper {
         try {
             val userManager = launcher.getSystemService(UserManager::class.java)
             // Real profile lock toggle: shows the system credential prompt when a lock is set.
+            Log.w(DBG, "calling UserManager.requestQuietModeEnabled(false) -> system shows ONE prompt")
             userManager?.requestQuietModeEnabled(false, user)
         } catch (se: SecurityException) {
             // Launcher is not the default HOME app: reuse the existing platform pattern and bail.

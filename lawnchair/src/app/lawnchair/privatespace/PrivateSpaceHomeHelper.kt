@@ -17,35 +17,47 @@
 package app.lawnchair.privatespace
 
 import android.content.Context
+import android.content.Intent
+import android.os.UserManager
 import android.util.Log
 import app.lawnchair.preferences2.PreferenceManager2
 import com.android.launcher3.Launcher
 import com.android.launcher3.allapps.UserProfileManager
 import com.android.launcher3.model.data.ItemInfo
 import com.android.launcher3.pm.UserCache
+import com.android.launcher3.util.ApiWrapper
+import com.android.launcher3.util.Executors.MAIN_EXECUTOR
+import com.android.launcher3.util.SafeCloseable
 import com.patrykmichalik.opto.core.firstBlocking
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Central decision point for the "Private Space on the home screen" feature.
  *
- * This helper decides whether a Private Space item may be dragged/pinned to the home
- * screen based on the live unlock state of the Private Space. Upstream Launcher3 files
- * only contain tiny, marked call-sites that delegate here, which keeps the fork
- * conflict-free during upstream merges.
+ * Two responsibilities:
+ *  1. Decide whether a Private Space item may be dragged/pinned to the home screen, based on
+ *     the live unlock state of the Private Space ([canPinPrivateItem]).
+ *  2. When a *locked* Private Space app on the home screen is tapped, show the system unlock
+ *     prompt exactly once and launch the app afterwards ([requestUnlockThenRun]).
  *
- * Launching a locked Private Space app from the home screen is intentionally NOT handled
- * here: stock Launcher3/Android already shows the system unlock prompt when such an app is
- * launched (see ItemClickHandler#handleDisabledItemClicked for FLAG_DISABLED_QUIET_USER).
- * Adding our own unlock request on top of that produced duplicate credential prompts, so we
- * rely on the platform's single, native prompt instead.
+ * Upstream Launcher3 files only contain tiny, marked call-sites that delegate here, which keeps
+ * the fork conflict-free during upstream merges.
  *
- * Every system/binder call is wrapped in a try/catch with a safe fallback so the launcher
- * never crashes: when in doubt we fall back to the original (safe) behaviour where Private
- * Space items are not pinnable.
+ * Every system/binder call is wrapped in a try/catch with a safe fallback so the launcher never
+ * crashes; when in doubt we fall back to the original (safe) behaviour.
  */
 object PrivateSpaceHomeHelper {
 
     private const val TAG = "PrivateSpaceHomeHelper"
+
+    /** Safety timeout (ms) after which a pending unlock is abandoned (e.g. prompt dismissed). */
+    private const val UNLOCK_TIMEOUT_MS = 60_000L
+
+    /**
+     * Guards against showing more than one credential prompt at a time. A second tap while an
+     * unlock is already pending is ignored, which prevents duplicate pincode prompts.
+     */
+    private val unlockInProgress = AtomicBoolean(false)
 
     /**
      * Returns whether the feature is enabled via [PreferenceManager2.allowPrivateSpaceOnHome].
@@ -79,7 +91,8 @@ object PrivateSpaceHomeHelper {
 
     /**
      * Returns true when the Private Space is currently unlocked
-     * ([UserProfileManager.STATE_ENABLED]).
+     * ([UserProfileManager.STATE_ENABLED]). Used by the drag/pin gate-keepers, which run in the
+     * All Apps context where this state is accurate.
      *
      * Returns false on any failure, which is the safe default (treat as locked).
      */
@@ -93,9 +106,8 @@ object PrivateSpaceHomeHelper {
     }
 
     /**
-     * Context-only overload of [isPrivateSpaceUnlocked] for call-sites that only have a
-     * [Context]. Resolves the [Launcher] via [Launcher.getLauncher] and returns false on
-     * any failure (safe default: treat as locked).
+     * Context-only overload of [isPrivateSpaceUnlocked] for call-sites that only have a [Context].
+     * Resolves the [Launcher] via [Launcher.getLauncher] and returns false on any failure.
      */
     fun isPrivateSpaceUnlocked(context: Context): Boolean {
         return try {
@@ -107,10 +119,7 @@ object PrivateSpaceHomeHelper {
     }
 
     /**
-     * Central pinnability rule for Private Space items.
-     *
-     * This is only meant to be called by the gate-keepers once an item has been
-     * identified as a Private Space item, but it is defensive about its inputs:
+     * Central pinnability rule for Private Space items (drag/pin):
      * - feature off -> false (original behaviour: not pinnable)
      * - feature on and Private Space unlocked -> true
      * - otherwise -> false (locked Private Space is not pinnable)
@@ -119,5 +128,128 @@ object PrivateSpaceHomeHelper {
         if (!isFeatureEnabled(context)) return false
         if (!isPrivateItem(context, info)) return false
         return isPrivateSpaceUnlocked(context)
+    }
+
+    /**
+     * Returns true when [info] is a private-profile item whose profile is currently *locked*
+     * (quiet mode on). This uses the authoritative [UserManager.isQuietModeEnabled] system state
+     * rather than the cached PrivateProfileManager state, because on the home screen that cached
+     * state can lag behind a just-completed unlock (which previously caused a second prompt).
+     */
+    fun isPrivateProfileLocked(context: Context, info: ItemInfo?): Boolean {
+        val user = info?.user ?: return false
+        return try {
+            if (!isPrivateItem(context, info)) return false
+            val userManager = context.getSystemService(UserManager::class.java)
+            userManager != null && userManager.isQuietModeEnabled(user)
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to read quiet mode state", e)
+            false
+        }
+    }
+
+    /**
+     * Shows the system unlock prompt for the locked Private Space profile of [info] exactly once,
+     * and runs [onUnlocked] after the profile actually becomes available.
+     *
+     * Single-prompt guarantees:
+     *  - [unlockInProgress] ignores additional taps while a prompt is already pending.
+     *  - The caller's guard uses [isPrivateProfileLocked] (authoritative), so the post-unlock
+     *    re-entry sees an unlocked profile and just launches instead of prompting again.
+     *
+     * Unlock detection uses [UserCache.addUserEventListener] (the codebase-native wrapper around
+     * the profile-available broadcast). All listener mutations are posted on the main handler so
+     * they never run during UserCache's own dispatch loop (avoids ConcurrentModificationException).
+     */
+    fun requestUnlockThenRun(launcher: Launcher, info: ItemInfo, onUnlocked: Runnable) {
+        val user = info.user ?: return
+        if (!isFeatureEnabled(launcher)) return
+        // Only one credential prompt at a time -> no duplicate pincode prompts.
+        if (!unlockInProgress.compareAndSet(false, true)) return
+
+        val appContext = launcher.applicationContext
+        val finished = AtomicBoolean(false)
+        val listenerHolder = arrayOfNulls<SafeCloseable>(1)
+        val timeoutHolder = arrayOfNulls<Runnable>(1)
+
+        fun releaseResources() {
+            listenerHolder[0]?.let { l ->
+                // Defer the removal so it never mutates UserCache's listener list mid-dispatch.
+                MAIN_EXECUTOR.handler.post {
+                    try {
+                        l.close()
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Failed to close unlock listener", e)
+                    }
+                }
+            }
+            listenerHolder[0] = null
+            timeoutHolder[0]?.let { MAIN_EXECUTOR.handler.removeCallbacks(it) }
+            timeoutHolder[0] = null
+        }
+
+        fun finish(runAction: Boolean) {
+            if (!finished.compareAndSet(false, true)) return
+            unlockInProgress.set(false)
+            releaseResources()
+            if (runAction) {
+                MAIN_EXECUTOR.handler.post {
+                    try {
+                        onUnlocked.run()
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Failed to run deferred Private Space app start", e)
+                    }
+                }
+            }
+        }
+
+        try {
+            listenerHolder[0] = UserCache.getInstance(appContext)
+                .addUserEventListener { changedUser, action ->
+                    if (changedUser == user && isProfileAvailableAction(action)) {
+                        // Defer: handling closes the listener, which must not happen during
+                        // UserCache.onUsersChanged's forEach iteration.
+                        MAIN_EXECUTOR.handler.post {
+                            val um = appContext.getSystemService(UserManager::class.java)
+                            if (um != null && !um.isQuietModeEnabled(user)) {
+                                finish(runAction = true)
+                            }
+                        }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to register Private Space unlock listener", e)
+        }
+
+        val timeout = Runnable { finish(runAction = false) }
+        timeoutHolder[0] = timeout
+        try {
+            MAIN_EXECUTOR.handler.postDelayed(timeout, UNLOCK_TIMEOUT_MS)
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to schedule unlock timeout", e)
+        }
+
+        try {
+            val userManager = launcher.getSystemService(UserManager::class.java)
+            // Real profile lock toggle: shows the system credential prompt when a lock is set.
+            userManager?.requestQuietModeEnabled(false, user)
+        } catch (se: SecurityException) {
+            // Launcher is not the default HOME app: reuse the existing platform pattern and bail.
+            Log.d(TAG, "Missing HOME role for Private Space unlock", se)
+            finish(runAction = false)
+            try {
+                ApiWrapper.INSTANCE.get(launcher).assignDefaultHomeRole(launcher)
+            } catch (t: Throwable) {
+                Log.d(TAG, "Failed to request default HOME role", t)
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to request Private Space unlock", e)
+            finish(runAction = false)
+        }
+    }
+
+    private fun isProfileAvailableAction(action: String?): Boolean {
+        return action == UserCache.ACTION_PROFILE_AVAILABLE ||
+            action == Intent.ACTION_MANAGED_PROFILE_AVAILABLE
     }
 }

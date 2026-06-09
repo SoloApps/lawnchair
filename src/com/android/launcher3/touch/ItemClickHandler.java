@@ -44,6 +44,8 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Toast;
 
+import app.lawnchair.privatespace.PrivateSpaceHomeHelper;
+
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.BuildConfig;
 import com.android.launcher3.Flags;
@@ -382,6 +384,16 @@ public class ItemClickHandler {
     private static void startAppShortcutOrInfoActivity(View v, ItemInfo item, Launcher launcher) {
         TestLogging.recordEvent(
                 TestProtocol.SEQUENCE_MAIN, "start: startAppShortcutOrInfoActivity");
+        // PSCHAIR-PATCH BEGIN: tik op een vergrendelde Private Space-app -> vraag eenmalig de
+        // pincode (echte profielvergrendeling) en start de app daarna. Na het ontgrendelen komt
+        // deze methode opnieuw langs; isPrivateProfileLocked is dan false, dus wordt direct gestart.
+        if (PrivateSpaceHomeHelper.INSTANCE.isFeatureEnabled(launcher)
+                && PrivateSpaceHomeHelper.INSTANCE.isPrivateProfileLocked(launcher, item)) {
+            PrivateSpaceHomeHelper.INSTANCE.requestUnlockThenRun(launcher, item,
+                    () -> startAppShortcutOrInfoActivity(v, item, launcher));
+            return;
+        }
+        // PSCHAIR-PATCH END
         Intent intent = item.getIntent();
         if (item instanceof ItemInfoWithIcon itemInfoWithIcon) {
             if ((itemInfoWithIcon.runtimeStatusFlags

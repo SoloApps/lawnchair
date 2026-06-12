@@ -54,7 +54,7 @@ worden bij een merge gewoon meegenomen.
 
 | Bestand | Status | Doel |
 |---------|--------|------|
-| `lawnchair/src/app/lawnchair/privatespace/PrivateSpaceHomeHelper.kt` | NIEUW | Centrale beslislogica: pinbaarheid (`canPinPrivateItem`) op basis van live unlock-status, plus single-prompt unlock-op-tik (`isPrivateProfileLocked` + `requestUnlockThenRun`) met `unlockInProgress`-gate en CME-veilige listener-afhandeling. |
+| `lawnchair/src/app/lawnchair/privatespace/PrivateSpaceHomeHelper.kt` | NIEUW | Centrale beslislogica: pinbaarheid (`canPinPrivateItem`) op basis van live unlock-status, plus single-prompt unlock-op-tik (`isPrivateProfileLocked` + `requestUnlockThenRun`) met `unlockInProgress`-gate en CME-veilige listener-afhandeling. Een `EVENT_RESUMED`-callback detecteert een weggeklikte pincodeprompt en reset de gate, zodat een volgende tik weer werkt (geen 60s-hang). |
 | `lawnchair/src/app/lawnchair/preferences2/PreferenceManager2.kt` | Gewijzigd | Preference `allowPrivateSpaceOnHome` (default `true`), volgens het patroon van `lockHomeScreen`. |
 | `lawnchair/res/values/config.xml` | Gewijzigd | Bool `config_default_allow_private_space_on_home` = `true` (configureerbare standaardwaarde). |
 | `lawnchair/src/app/lawnchair/ui/preferences/destinations/HomeScreenPreferences.kt` | Gewijzigd | `SwitchPreference` voor de toggle in de Homescreen-instellingen. |

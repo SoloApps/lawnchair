@@ -21,6 +21,7 @@ import android.content.Intent
 import android.os.UserManager
 import android.util.Log
 import app.lawnchair.preferences2.PreferenceManager2
+import com.android.launcher3.BaseActivity
 import com.android.launcher3.Launcher
 import com.android.launcher3.allapps.UserProfileManager
 import com.android.launcher3.model.data.ItemInfo
@@ -56,6 +57,13 @@ object PrivateSpaceHomeHelper {
     /** Polling for "profile fully unlocked" as a fallback if the unlocked broadcast is missed. */
     private const val READY_POLL_INTERVAL_MS = 150L
     private const val READY_MAX_ATTEMPTS = 120 // ~18s worst case (CE unlock can take several seconds)
+
+    /**
+     * Delay (ms) after the launcher returns to the foreground before deciding the credential
+     * prompt was dismissed/cancelled. Gives the success path (quiet mode turning off + unlock
+     * broadcasts) a brief moment to arrive so we never reset the gate on a successful unlock.
+     */
+    private const val RESUME_CANCEL_CHECK_MS = 750L
 
     /**
      * Guards against showing more than one credential prompt at a time. A second tap while an
@@ -177,6 +185,9 @@ object PrivateSpaceHomeHelper {
         val finished = AtomicBoolean(false)
         val listenerHolder = arrayOfNulls<SafeCloseable>(1)
         val timeoutHolder = arrayOfNulls<Runnable>(1)
+        // EVENT_RESUMED callback used to detect that the credential prompt was dismissed/cancelled
+        // (launcher returns to the foreground while the profile is still locked).
+        val resumeCallbackHolder = arrayOfNulls<Runnable>(1)
 
         fun releaseResources() {
             listenerHolder[0]?.let { l ->
@@ -192,6 +203,16 @@ object PrivateSpaceHomeHelper {
             listenerHolder[0] = null
             timeoutHolder[0]?.let { MAIN_EXECUTOR.handler.removeCallbacks(it) }
             timeoutHolder[0] = null
+            resumeCallbackHolder[0]?.let { cb ->
+                MAIN_EXECUTOR.handler.post {
+                    try {
+                        launcher.removeEventCallback(BaseActivity.EVENT_RESUMED, cb)
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Failed to remove resume callback", e)
+                    }
+                }
+            }
+            resumeCallbackHolder[0] = null
         }
 
         fun finish(runAction: Boolean) {
@@ -269,6 +290,36 @@ object PrivateSpaceHomeHelper {
             MAIN_EXECUTOR.handler.postDelayed(timeout, UNLOCK_TIMEOUT_MS)
         } catch (e: Exception) {
             Log.d(TAG, "Failed to schedule unlock timeout", e)
+        }
+
+        // Detect a dismissed/cancelled credential prompt. The launcher is currently in the
+        // foreground (RESUMED), so this one-shot callback does NOT fire now; it fires on the *next*
+        // onResume, i.e. when the launcher returns after the prompt closes. If the profile is still
+        // locked then (and no unlock is underway), the user cancelled -> reset the gate so the next
+        // tap can prompt again instead of being ignored until the 60s safety timeout.
+        val resumeCallback = Runnable {
+            MAIN_EXECUTOR.handler.postDelayed({
+                if (finished.get()) return@postDelayed
+                // An unlock is already in progress (quiet mode turned off); leave it to finish.
+                if (launchScheduled.get()) return@postDelayed
+                val stillLocked = try {
+                    val um = appContext.getSystemService(UserManager::class.java)
+                    um != null && um.isQuietModeEnabled(user)
+                } catch (e: Exception) {
+                    false
+                }
+                if (stillLocked) {
+                    Log.d(TAG, "Credential prompt dismissed without unlock; resetting unlock gate")
+                    finish(runAction = false)
+                }
+            }, RESUME_CANCEL_CHECK_MS)
+        }
+        resumeCallbackHolder[0] = resumeCallback
+        try {
+            launcher.addEventCallback(BaseActivity.EVENT_RESUMED, resumeCallback)
+        } catch (e: Exception) {
+            Log.d(TAG, "Failed to register resume callback", e)
+            resumeCallbackHolder[0] = null
         }
 
         try {
